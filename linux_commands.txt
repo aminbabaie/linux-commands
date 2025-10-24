@@ -1,0 +1,240 @@
+1. System Log Audit & Summary
+
+Command:
+grep -i "error" /var/log/syslog | awk '{print $1, $2, $3, $5, $6, $7}' | sort | uniq -c | sort -nr | head -20
+
+What it does (high level):
+Scans system log for lines containing "error", extracts key fields (date/time and message fragments), groups identical entries and counts them, then shows the most frequent entries. Great for spotting recurring problems quickly.
+
+Detailed breakdown:
+- grep -i "error" /var/log/syslog
+  - grep: search tool that prints lines matching a pattern.
+  - -i: case-insensitive, so "Error", "ERROR", and "error" all match.
+  - This stage filters the log down to likely problem lines.
+- awk '{print $1, $2, $3, $5, $6, $7}'
+  - awk: a small programming language for processing text line-by-line, splitting each line into fields separated by whitespace (by default).
+  - $1, $2, $3 are the first three fields (usually month, day, time in syslog).
+  - $5, $6, $7 are additional fields from the log message (depends on log format); this extracts a concise, readable subset of each line.
+- sort
+  - sorts lines lexicographically so identical lines are adjacent (required before uniq -c).
+- uniq -c
+  - uniq collapses adjacent identical lines into one and with -c prefixes the line with a count (how many times it occurred).
+  - IMPORTANT: uniq only collapses *adjacent* identical lines; that is why we use sort first.
+- sort -nr
+  - sorts numerically (-n) and in reverse order (-r), so the largest counts come first.
+- head -20
+  - limits output to the top 20 lines so you see the most common errors at a glance.
+
+---
+
+2. Find the 10 Largest Files on System
+
+Command:
+find / -type f -exec du -Sh {} + 2>/dev/null | sort -rh | head -10
+
+What it does (high level):
+Searches the filesystem for regular files, calculates their sizes in human-readable form, sorts by size and lists the top 10 largest files. Useful to quickly locate space hogs.
+
+Detailed breakdown:
+- find / -type f
+  - find: searches directories recursively starting at /.
+  - -type f: only regular files (not directories, links, etc.).
+- -exec du -Sh {} +
+  - -exec ... {} + runs the du command on groups of files found (more efficient than running once per file).
+  - du -S: "summarize" excluding subdirectory sizes (when used on directories) — here used for files.
+  - -h: human-readable sizes (e.g., K, M, G).
+- 2>/dev/null
+  - redirects stderr (file descriptor 2) to /dev/null, hiding permission-denied or other error messages from find/du.
+- sort -rh
+  - sort by human-readable numbers in reverse order so largest sizes appear first.
+- head -10
+  - show only the top 10 entries.
+
+---
+
+3. Monitor Top Memory-Hungry Processes
+
+Command:
+ps aux --sort=-%mem | awk 'NR<=15 {print NR".", $1, $2, $3"%", $4"%", $11}'
+
+What it does (high level):
+Lists processes sorted by memory usage (highest first) and prints the top 15 with user, PID, percent CPU, percent memory, and command — handy for spotting memory leaks or runaway processes.
+
+Detailed breakdown:
+- ps aux --sort=-%mem
+  - ps: lists processes.
+  - a,u,x: common flags: 'a' (all users), 'u' (user-oriented format), 'x' (include processes without a controlling terminal).
+  - --sort=-%mem: sort by % memory descending (the minus sign means reverse, i.e., highest first).
+- awk 'NR<=15 {print NR".", $1, $2, $3"%", $4"%", $11}'
+  - NR: awk's "record number" (line number). NR<=15 limits output to the first 15 lines.
+  - $1 is the USER, $2 is PID, $3 is %CPU, $4 is %MEM, $11 is the command (field positions match ps aux output).
+  - This formats the output to a compact, human-friendly list with numbering.
+
+---
+
+4. Network Connection Summary by IP
+
+Command:
+ss -tuna | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -nr | head -20
+
+What it does (high level):
+Lists active socket connections, extracts the remote address:port field, strips ports to get IPs, counts occurrences per IP, and shows the most frequent remote peers connecting to your system.
+
+Detailed breakdown:
+- ss -tuna
+  - ss: modern replacement for netstat; lists sockets.
+  - -tuna: t (tcp), u (udp), n (numeric addresses/ports, avoids DNS lookups), a (all sockets).
+- awk '{print $5}'
+  - extracts the fifth column from ss output (typically the peer address:port field).
+- cut -d: -f1
+  - splits by ':' and takes the first field, removing the port to keep only the IP address.
+  - Note: for IPv6 addresses containing colons, this naive cut may truncate; for more robust handling you'd use more complex parsing.
+- sort
+  - groups identical IPs together.
+- uniq -c
+  - counts how many times each IP appears (i.e., number of connections from/to that IP).
+- sort -nr
+  - sorts by count descending so busiest IPs appear first.
+- head -20
+  - show top 20 IPs.
+
+---
+
+5. Backup and Compress Modified Files
+
+Command:
+find /home/user/documents -type f -mtime -3 -print0 | tar -czvf recent_backup_$(date +%F).tar.gz --null -T -
+
+What it does (high level):
+Finds files in a directory modified in the last 3 days and creates a timestamped compressed tarball containing exactly those files. Safe for filenames with spaces/newlines because it uses null separators.
+
+Detailed breakdown:
+- find /home/user/documents -type f -mtime -3 -print0
+  - -mtime -3: modified within the last 3 days (negative means "less than 3 days ago").
+  - -print0: outputs filenames terminated by a null byte (prevents issues with spaces, newlines, or special characters in filenames).
+- tar -czvf recent_backup_$(date +%F).tar.gz --null -T -
+  - tar: archive utility.
+  - -c: create archive; -z: gzip compress; -v: verbose; -f: specify filename.
+  - $(date +%F) expands to YYYY-MM-DD, giving the archive a date in its name.
+  - --null -T -: read the list of filenames from stdin (the '-' means stdin) and interpret them as null-separated (compatible with -print0).
+  - Together, this safely packages only the recently changed files into a compressed archive.
+
+---
+
+6. Real-Time Disk Usage Watcher
+
+Command:
+watch -n 5 "df -h | grep -E '^Filesystem|/dev/' | awk '{print $1, $3, $4, $5}'"
+
+What it does (high level):
+Runs a disk usage summary every 5 seconds, displaying filesystem name, used, available, and percentage used — useful when copying large data or tracking a filling disk in real time.
+
+Detailed breakdown:
+- watch -n 5 "<command>"
+  - watch: runs the specified command repeatedly, updating the display.
+  - -n 5: run every 5 seconds.
+- df -h
+  - df: reports filesystem disk space usage.
+  - -h: human-readable sizes.
+- grep -E '^Filesystem|/dev/'
+  - filters output to show the header line and typical block device filesystems (adjust if your system uses different mount names like /dev/mapper/... or cloud volumes).
+- awk '{print $1, $3, $4, $5}'
+  - prints columns: filesystem, used, available, and percent-used for a compact view.
+
+---
+
+7. Find and Kill Zombie Processes
+
+Command:
+ps aux | awk '{ if ($8 == "Z") print $2, $11 }' | while read pid cmd; do echo "Killing zombie $cmd (PID: $pid)"; kill -9 $pid; done
+
+What it does (high level):
+Detects processes in the 'Z' (zombie/defunct) state and forcefully kills them by PID. Useful to clean up after orphaned child processes that weren't reaped properly.
+
+Detailed breakdown:
+- ps aux
+  - lists running processes in a detailed format.
+- awk '{ if ($8 == "Z") print $2, $11 }'
+  - checks the 8th field (STAT column in ps aux output) for "Z" (zombie state).
+  - prints PID ($2) and command ($11) for each zombie found.
+  - Field positions rely on ps aux column ordering; if you have a different ps variant that's formatted differently, adjust accordingly.
+- while read pid cmd; do ... done
+  - loops over each returned PID/command pair.
+  - echo prints what will be killed for visibility.
+  - kill -9 $pid attempts to forcefully terminate the process (SIGKILL).
+  - NOTE: killing a true zombie process usually does nothing because zombies are already dead; they remain until their parent reaps them. Often the correct fix is to restart or kill the parent process. This script is aggressive: it attempts kill -9 and is useful when parent handling is known.
+
+---
+
+8. Check Last 10 Logins with Geolocation (if geoiplookup installed)
+
+Command:
+last -n 10 | awk '{print $1, $3}' | grep -v "reboot" | while read user ip; do echo "$user logged in from $ip - $(geoiplookup $ip | cut -d, -f1)"; done
+
+What it does (high level):
+Shows the last 10 login records, filters out reboots, and attempts a country lookup for each IP using geoiplookup — handy for a quick security review of recent logins.
+
+Detailed breakdown:
+- last -n 10
+  - last: displays login history from /var/log/wtmp.
+  - -n 10: limit to the last 10 entries.
+- awk '{print $1, $3}'
+  - prints the username ($1) and the IP/host field ($3). Depending on your environment last's columns may vary—verify on your system.
+- grep -v "reboot"
+  - removes lines representing system reboots from the output.
+- while read user ip; do ... done
+  - iterates over each username/IP pair.
+  - geoiplookup $ip queries a local GeoIP database (requires package installation and database files).
+  - cut -d, -f1 trims the geoip output to the primary location portion.
+- Caveat: geoiplookup may fail for local/private IPs or if no database is installed. Consider using `who` or `last -i` for more consistent IP display.
+
+---
+
+9. Detect Suspicious Files Changed in Last 24 Hours
+
+Command:
+find / -mtime -1 -type f \( -perm -4000 -o -perm -2000 \) -exec ls -l {} \; 2>/dev/null
+
+What it does (high level):
+Searches the system for files changed in the last 24 hours that have SUID or SGID bits set (special permissions that can allow privilege escalation), and lists their details. Useful for quick forensic checks after suspected compromise.
+
+Detailed breakdown:
+- find / -mtime -1 -type f
+  - -mtime -1: modified within the last 1 day (24 hours).
+  - -type f: only regular files.
+- \( -perm -4000 -o -perm -2000 \)
+  - \( ... \): groups the permission tests (escaped parentheses shown as backslashes in this text file so they work in a shell-script context).
+  - -perm -4000: files with the SUID bit set (owner executes with file owner's privileges).
+  - -perm -2000: files with the SGID bit set (group executes with file group's privileges).
+  - -o: logical OR between the two permission tests.
+- -exec ls -l {} \;
+  - lists long-format file details for each matched file.
+- 2>/dev/null
+  - suppresses permission-denied and other errors during the full-system find.
+
+Security note:
+SUID/SGID binaries are legitimate on many systems, but unexpected or recently changed ones can indicate tampering. Investigate any unfamiliar entries carefully.
+
+---
+
+10. Analyze Web Server Access Logs (Top Visitors)
+
+Command:
+awk '{print $1}' /var/log/apache2/access.log | sort | uniq -c | sort -nr | head -20
+
+What it does (high level):
+Parses an Apache access log to extract client IP addresses, counts requests per IP, and shows the top 20 most active clients — helpful for identifying abusive actors or traffic spikes.
+
+Detailed breakdown:
+- awk '{print $1}' /var/log/apache2/access.log
+  - awk: extracts the first field of each log line; for common Apache log formats the first field is the client IP address.
+  - If your server uses a different log format or reverse proxy, the IP may be in another field (or X-Forwarded-For header); adjust accordingly.
+- sort
+  - groups identical IPs together for counting.
+- uniq -c
+  - collapses adjacent identical lines and prefixes counts (requests per IP).
+- sort -nr
+  - orders by request count, highest first.
+- head -20
+  - shows the top 20 IPs by request volume.
+
